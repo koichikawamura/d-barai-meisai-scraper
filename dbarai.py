@@ -15,7 +15,7 @@ from datetime import datetime
 import pandas as pd
 from unicodedata import normalize
 
-CHROMEDRIVER = './chromedriver'
+CHROMEDRIVER = '/opt/homebrew/bin/chromedriver'
 
 
 class DBaraiSite:
@@ -43,7 +43,7 @@ class DBaraiSite:
         )
         e.click()
 
-    def get_meisai_page(self, month):
+    def get_selectable_months(self):
         try:
             cdate = self.driver.find_element(By.ID, 'cdate').text
         except NoSuchElementException:
@@ -64,6 +64,12 @@ class DBaraiSite:
         selectable_months = [
             o.get_attribute('value') for o in select_object.options
         ]
+
+        return (selectable_months, select_object)
+
+    def get_meisai_page(self, month):
+        selectable_months, select_object = self.get_selectable_months()
+
         if month not in selectable_months:
             print(f"{month}は選択できません。", file=sys.stderr)
             return
@@ -109,7 +115,7 @@ def get_meisai_table(d_barai_site, month):
     price_finder = re.compile(r'¥\s([,\d]+)')
     records = []
     for html in d_barai_site.get_meisai_page(month):
-        soup = BeautifulSoup(html, 'html.parser')
+        soup = BeautifulSoup(html.decode('utf-8'), 'html.parser')
         meisai_table = soup.find('table', class_='appliTable')
         for t in meisai_table.find_all('tr'):
             div_date = t.select_one('div.date')
@@ -121,6 +127,7 @@ def get_meisai_table(d_barai_site, month):
             vender = t.select_one('div.vender').text
             price_section = t.select_one('span.price').text
             m = price_finder.search(price_section)
+            assert m, f'{price_section}'
             price = int(m.group(1).replace(',', ''))
 
             record = {
@@ -141,7 +148,7 @@ def get_meisai_table(d_barai_site, month):
         return transaction_df
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='docomoのウェブサイトからd払いの明細データをスクレイピングするツール'
     )
@@ -173,6 +180,11 @@ if __name__ == '__main__':
         help='EXCELのファイルを出力'
     )
     parser.add_argument(
+        '-y', '--excelsheets',
+        action='store_true',
+        help='EXCELの複数シートに出力'
+    )
+    parser.add_argument(
         '-e', '--encoding',
         help='csvを出力する場合のエンコーディング'
     )
@@ -181,6 +193,9 @@ if __name__ == '__main__':
     print(args)
 
     d_barai_site = DBaraiSite(CHROMEDRIVER, args.user)
+
+    if args.excelsheets:
+        writer = pd.ExcelWriter('d払い_支払い.xlsx')
 
     for m in args.month:
         transaction_df = get_meisai_table(d_barai_site, m)
@@ -209,4 +224,15 @@ if __name__ == '__main__':
                 index=False
             )
 
+        if args.excelsheets:
+            transaction_df.to_excel(writer, sheet_name=f"{m}", index=False)
+
+    if args.excelsheets:
+        writer.save()
+        writer.close()
+
     d_barai_site.quit()
+
+
+if __name__ == '__main__':
+    main()
